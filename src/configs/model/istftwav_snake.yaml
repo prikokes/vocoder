@@ -1,0 +1,22 @@
+_target_: src.model.ISTFTWavSnakeGAN
+generator_params:
+  sr: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  fmin: 0.0
+  fmax: 8000.0
+
+  asp_channel: 513
+  asp_num_convnext_blocks: 1
+  asp_intermediate_dim: 1536
+  asp_num_layers_for_scale: 8
+
+  phase_channels: 128
+  phase_temporal_upsample: 8
+  phase_temporal_kernel_size: 16
+  phase_resblock_kernel_sizes: [3, 7, 11]
+  phase_resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+  phase_n_2d_shuffle_layers: 6
+  phase_freq_upsample_factors: [2, 2, 2]

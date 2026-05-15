@@ -1,0 +1,26 @@
+_target_: src.model.FreeV
+
+generator_params:
+  sr: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  fmin: 0.0
+  fmax: 8000.0
+
+  asp_channel: 513
+  asp_num_convnext_blocks: 1
+
+  psp_channel: 512
+  psp_input_conv_kernel_size: 7
+  psp_output_R_conv_kernel_size: 7
+  psp_output_I_conv_kernel_size: 7
+  psp_num_convnext_blocks: 8
+
+  intermediate_dim: 1536
+  num_layers_for_scale: 8
+
+mpd_params: {}
+
+mrd_params: {}

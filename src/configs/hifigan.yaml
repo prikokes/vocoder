@@ -1,0 +1,61 @@
+defaults:
+  - transforms: hifigan_transforms
+  - model: hifigan
+  - writer: cometml
+  - metrics: hifigan_metrics
+  - datasets: ljspeech
+  - dataloader: hifigan_dataloader
+  - _self_
+
+
+run_name: "HiFiGAN-Full Data"
+
+writer:
+  run_name: ${run_name}
+
+
+optimizer_g:
+  _target_: torch.optim.AdamW
+  lr: 0.0002
+  betas: [0.8, 0.99]
+  weight_decay: 0.01
+
+optimizer_d:
+  _target_: torch.optim.AdamW
+  lr: 0.0002
+  betas: [0.8, 0.99]
+  weight_decay: 0.01
+
+lr_scheduler_g:
+  _target_: torch.optim.lr_scheduler.ExponentialLR
+  gamma: 0.999
+
+lr_scheduler_d:
+  _target_: torch.optim.lr_scheduler.ExponentialLR
+  gamma: 0.999
+
+loss_function:
+  _target_: src.loss.HiFiGANLoss
+  lambda_adv: 1.0
+  lambda_fm: 2.0
+  lambda_mel: 45.0
+
+trainer:
+  _target_: src.trainer.HiFiGANTrainer
+  log_step: 100
+  n_epochs: 400
+  epoch_len: 205
+  device_tensors: ["mel", "audio"]
+  resume_from: null
+  device: cuda
+  override: True
+  monitor: "min val_MelDistance"
+  save_period: 50
+  early_stop: 200
+  save_dir: "saved_hifigan"
+  seed: 1
+  d_steps: 1
+  g_steps: 1
+  max_grad_norm_g: 1.0
+  max_grad_norm_d: 1.0
+  segment_size: 16384

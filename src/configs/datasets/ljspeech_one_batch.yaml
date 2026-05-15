@@ -1,0 +1,40 @@
+train:
+  _target_: src.datasets.lj_speech_dataset.LJSpeechDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LJSpeech-1.1"
+  metadata_file: "metadata.csv"
+  segment_size: 16384
+  limit: 1
+  offset: 0
+  shuffle_index: false
+  instance_transforms:
+    mel:
+      _target_: src.transforms.AudioToMelSpectrogram
+      sample_rate: 22050
+      n_fft: 1024
+      hop_length: 256
+      win_length: 1024
+      n_mels: 80
+      f_min: 0.0
+      f_max: 8000.0
+
+val:
+  _target_: src.datasets.lj_speech_dataset.LJSpeechDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LJSpeech-1.1"
+  metadata_file: "metadata.csv"
+  segment_size: 16384
+  limit: 1
+  offset: 0
+  shuffle_index: false
+  instance_transforms: ${transforms.instance_transforms.inference}
+  split_symbol: "|"
+
+test:
+  _target_: src.datasets.lj_speech_dataset.LJSpeechDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LJSpeech-1.1"
+  metadata_file: "metadata.csv"
+  segment_size: 16384
+  limit: 1
+  offset: 0
+  shuffle_index: false
+  instance_transforms: ${transforms.instance_transforms.inference}
+  split_symbol: "|"

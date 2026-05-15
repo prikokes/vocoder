@@ -1,0 +1,16 @@
+_target_: src.logger.tbwriter.TensorboardWriter
+project_name: "pytorch_template"
+workspace: null
+run_name: ???
+mode: "offline"
+loss_names:
+  - loss_g
+  - loss_d
+  - loss_adv
+  - loss_fm
+  - loss_mel
+  - loss_amplitude
+  - loss_phase
+  - loss_stft
+log_checkpoints: False 
+id_length: 32 

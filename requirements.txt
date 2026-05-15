@@ -1,0 +1,23 @@
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+torchmetrics==1.8.2
+numpy==2.2.6
+scipy==1.15.3
+tqdm
+matplotlib
+pandas==2.3.3
+# wandb
+comet_ml
+hydra-core
+soundfile
+black
+isort
+# pre-commit
+pystoi
+pesq
+librosa
+thop
+# fastdtw
+# pyworld
+# pysptk

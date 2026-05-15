@@ -1,0 +1,17 @@
+_target_: src.logger.CometMLWriter
+project_name: "pytorch_template"
+workspace: null
+run_name: ???
+# mode: "offline"
+offline_directory: "./comet_logs"
+loss_names:
+  - loss_g
+  - loss_d
+  - loss_adv
+  - loss_fm
+  - loss_mel
+  - loss_amplitude
+  - loss_phase
+  - loss_stft
+log_checkpoints: False
+id_length: 32

@@ -1,0 +1,19 @@
+defaults:
+  - model: hifigan
+  - metrics: hifigan_metrics
+  - datasets: ljspeech
+  - dataloader: hifigan_dataloader
+  - transforms: hifigan_transforms
+  - _self_
+
+inferencer:
+  device_tensors: ["mel", "audio"]
+  device: cuda
+  save_path: "freev_inference"
+  seed: 1
+  from_pretrained: E:/se/4_course/thesis/audio_vocoder/src/weights/model_best_freev.pth
+  sample_rate: 22050
+  
+  run_evaluation: true
+  eval_samples_limit: 600
+  num_demos: 5
