@@ -1,5 +1,7 @@
 # Neural Audio Vocoders: Quality and Performance Evaluation
 
+[![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-Pretrained%20Weights-yellow)](https://huggingface.co/Prikokes/istftwav_vocoder)
+
 This repository contains the codebase for training, evaluating, and comparing various neural vocoder architectures. The main goal of this research is to analyze the trade-offs between audio synthesis quality, model size, and inference speed (Real-Time Factor — RTF).
 
 Supported models include standard baselines and modern architectures such as **HiFi-GAN (V1 & V2)**, **FreeV**, and custom **iSTFT-based models** (Model 2: ISTFTWav, Model 3: ISTFTWavSnake).
