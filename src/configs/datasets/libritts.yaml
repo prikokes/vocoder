@@ -1,0 +1,50 @@
+# LibriTTS is multi-speaker: unlike LJSpeech there is no single metadata.csv,
+# so val/test use LibriTTS's own held-out speaker splits (dev-clean/test-clean)
+# instead of an offset/limit slice of the same speakers as train.
+# TODO: point root_dir at your local LibriTTS download, e.g.
+#   .../LibriTTS/{train-clean-100,train-clean-360,dev-clean,test-clean}/...
+train:
+  _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LibriTTS"
+  subsets: ["train-clean-100"]
+  segment_size: 16384
+  min_duration_sec: 0.5
+  max_files_per_speaker: null
+  limit: null
+  offset: 0
+  shuffle_index: true
+  use_index_cache: true
+  instance_transforms:
+    mel:
+      _target_: src.transforms.AudioToMelSpectrogram
+      sample_rate: 22050
+      n_fft: 1024
+      hop_length: 256
+      win_length: 1024
+      n_mels: 80
+      f_min: 0.0
+      f_max: 8000.0
+
+val:
+  _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LibriTTS"
+  subsets: ["dev-clean"]
+  segment_size: 16384
+  min_duration_sec: 0.5
+  limit: 500
+  offset: 0
+  shuffle_index: true
+  use_index_cache: true
+  instance_transforms: ${transforms.instance_transforms.inference}
+
+test:
+  _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
+  root_dir: "/home/gyaivanov_1/audio_vocoder/data/LibriTTS"
+  subsets: ["test-clean"]
+  segment_size: 16384
+  min_duration_sec: 0.5
+  limit: 600
+  offset: 0
+  shuffle_index: true
+  use_index_cache: true
+  instance_transforms: ${transforms.instance_transforms.inference}
