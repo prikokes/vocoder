@@ -18,6 +18,7 @@ pystoi
 pesq
 librosa
 thop
+dotenv
 # fastdtw
 # pyworld
 # pysptk

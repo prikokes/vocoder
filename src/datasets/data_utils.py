@@ -1,9 +1,12 @@
+import logging
 from itertools import repeat
 
 from hydra.utils import instantiate
 
 from src.datasets.collate import collate_fn
 from src.utils.init_utils import set_worker_seed
+
+logger = logging.getLogger(__name__)
 
 
 def inf_loop(dataloader):
@@ -70,14 +73,26 @@ def get_dataloaders(config, device):
     for dataset_partition in config.datasets.keys():
         dataset = datasets[dataset_partition]
 
-        assert config.dataloader.batch_size <= len(dataset), (
-            f"The batch size ({config.dataloader.batch_size}) cannot "
-            f"be larger than the dataset length ({len(dataset)})"
-        )
+        if len(dataset) == 0:
+            raise ValueError(
+                f"Dataset partition '{dataset_partition}' is empty, "
+                f"check its config in config.datasets"
+            )
+
+        batch_size = config.dataloader.batch_size
+        if batch_size > len(dataset):
+            # Small partitions (or a small local subset of the corpus) should not
+            # abort the run - a single short batch is enough to evaluate on.
+            logger.warning(
+                f"Partition '{dataset_partition}' has only {len(dataset)} elements, "
+                f"reducing its batch size from {batch_size} to {len(dataset)}"
+            )
+            batch_size = len(dataset)
 
         partition_dataloader = instantiate(
             config.dataloader,
             dataset=dataset,
+            batch_size=batch_size,
             collate_fn=collate_fn,
             drop_last=(dataset_partition == "train"),
             shuffle=(dataset_partition == "train"),

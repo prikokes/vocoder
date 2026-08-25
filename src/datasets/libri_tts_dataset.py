@@ -1,9 +1,8 @@
-import json
+import hashlib
 import logging
-import os
 import random
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import soundfile
 import torch
@@ -14,30 +13,23 @@ from src.transforms.audio_transforms import AudioToMelSpectrogram
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AUDIO_EXTENSIONS = (".wav", ".flac", ".ogg", ".opus", ".mp3")
+
+PARTS = ("train", "val", "test", "all")
+
+_SCAN_MEMO: dict = {}
+
 
 class LibriTTSDataset(Dataset):
-    """
-    Multi-speaker dataset for LibriTTS / LibriTTS-R, laid out as
-    root_dir/{subset}/{speaker_id}/{chapter_id}/{speaker}_{chapter}_{utt}_{seg}.wav
-
-    There is no single metadata.csv like in LJSpeech: the index is built by
-    scanning wav files directly (the directory name right under the subset
-    folder gives the speaker id). Since a full scan of train-clean-360 /
-    train-other-500 touches hundreds of thousands of files, the resulting
-    index is cached to disk after the first run.
-
-    The vocoder itself is not speaker-conditioned, so the returned sample
-    shape ("audio", "mel", "audio_path") is identical to LJSpeechDataset and
-    needs no changes in collate_fn / trainer / model. LibriTTS audio is
-    natively 24kHz; it is resampled to `sample_rate` (22050 by default, to
-    match the rest of the pipeline's mel/model config) on load.
-    """
-
     def __init__(
             self,
             root_dir: str,
-            subsets: List[str] = ("train-clean-100",),
-            segment_size: int = 16384,
+            subsets: Sequence[str] = ("train-clean-100",),
+            part: str = "train",
+            val_ratio: float = 0.1,
+            test_ratio: float = 0.1,
+            split_seed: int = 42,
+            segment_size: Optional[int] = 16384,
             hop_length: int = 256,
             sample_rate: int = 22050,
             n_mels: int = 80,
@@ -46,19 +38,25 @@ class LibriTTSDataset(Dataset):
             f_max: float = 8000.0,
             min_duration_sec: float = 0.5,
             max_duration_sec: Optional[float] = None,
-            speakers: Optional[List[str]] = None,
-            exclude_speakers: Optional[List[str]] = None,
+            speakers: Optional[Sequence[str]] = None,
+            exclude_speakers: Optional[Sequence[str]] = None,
             max_files_per_speaker: Optional[int] = None,
-            limit: int = None,
-            offset: int = 0,
+            audio_extensions: Optional[Sequence[str]] = None,
+            limit: Optional[int] = None,
             shuffle_index: bool = False,
-            instance_transforms: dict = None,
-            use_index_cache: bool = True,
-            index_cache_path: str = None,
             name: str = "libritts",
     ):
-        self.root_dir = root_dir
+        if part not in PARTS:
+            raise ValueError(f"Unknown part '{part}', expected one of {PARTS}")
+        if not 0.0 <= val_ratio + test_ratio < 1.0:
+            raise ValueError(
+                f"val_ratio + test_ratio must be in [0, 1), "
+                f"got {val_ratio} + {test_ratio}"
+            )
+
+        self.root_dir = str(root_dir)
         self.subsets = list(subsets)
+        self.part = part
         self.segment_size = segment_size
         self.hop_length = hop_length
         self.sample_rate = sample_rate
@@ -74,44 +72,57 @@ class LibriTTSDataset(Dataset):
             f_max=f_max,
         )
 
-        index = self._load_or_build_index(
-            use_index_cache, index_cache_path, min_duration_sec, max_duration_sec,
+        extensions = tuple(
+            ext.lower() if ext.startswith(".") else f".{ext.lower()}"
+            for ext in (audio_extensions or DEFAULT_AUDIO_EXTENSIONS)
         )
 
-        allow_set = set(speakers) if speakers else None
-        exclude_set = set(exclude_speakers) if exclude_speakers else set()
-        index = [
-            entry for entry in index
-            if self._speaker_allowed(entry["speaker_id"], allow_set, exclude_set)
-        ]
+        index = self._scan(
+            root_dir=self.root_dir,
+            subsets=self.subsets,
+            extensions=extensions,
+            min_duration_sec=min_duration_sec,
+            max_duration_sec=max_duration_sec,
+        )
+        scanned_total = len(index)
 
+        index = self._filter_speakers(index, speakers, exclude_speakers)
         if max_files_per_speaker is not None:
-            index = self._cap_per_speaker(index, max_files_per_speaker)
+            index = self._cap_per_speaker(index, max_files_per_speaker, split_seed)
 
-        self._assert_index_is_valid(index)
-        index = self._apply_offset_and_limit(index, offset, limit)
-        index = self._shuffle_and_limit_index(index, limit, shuffle_index)
+        index = self._select_part(index, part, val_ratio, test_ratio, split_seed)
+
+        if shuffle_index:
+            random.Random(split_seed).shuffle(index)
+        if limit is not None:
+            index = index[:limit]
+
         self._index: List[dict] = index
+
+        if len(self._index) == 0:
+            raise RuntimeError(
+                f"LibriTTSDataset[{name}] partition '{part}' is empty "
+                f"({scanned_total} audio files matched the scan of "
+                f"{self.root_dir} / {self.subsets}). Check root_dir, subsets, "
+                f"the speaker filters and the duration filters "
+                f"(min_duration_sec={min_duration_sec}, "
+                f"max_duration_sec={max_duration_sec})."
+            )
 
         n_speakers = len({entry["speaker_id"] for entry in self._index})
         logger.info(
-            f"LibriTTSDataset[{name}]: {len(self._index)} utterances, "
+            f"LibriTTSDataset[{name}] part='{part}': {len(self._index)} utterances, "
             f"{n_speakers} speakers, subsets={self.subsets}"
         )
-        print(len(self._index))
 
-        self.instance_transforms = instance_transforms
+    def __len__(self):
+        return len(self._index)
 
     def __getitem__(self, idx):
         data_dict = self._index[idx]
         audio_path = data_dict["audio_path"]
 
         waveform, sr = self.load_audio(audio_path)
-
-        if waveform.dim() == 1:
-            waveform = waveform.unsqueeze(0)
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
 
         if sr != self.sample_rate:
             waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
@@ -120,27 +131,25 @@ class LibriTTSDataset(Dataset):
             waveform = self._segment_audio(waveform)
 
         mel = self.mel_transform(waveform)
-
         if mel.dim() == 3 and mel.shape[0] == 1:
             mel = mel.squeeze(0)  # [n_mels, T]
 
-        data = {
-            "audio": waveform,
-            "mel": mel,  # [n_mels, T]
+        return {
+            "audio": waveform,  # [1, T]
+            "mel": mel,  # [n_mels, T']
             "audio_path": audio_path,
         }
 
-        return data
-
-    def __len__(self):
-        return len(self._index)
-
     def load_audio(self, audio_path):
-        waveform, sample_rate = soundfile.read(audio_path)
+        waveform, sample_rate = soundfile.read(audio_path, dtype="float32")
         waveform = torch.from_numpy(waveform)
-        waveform = waveform.to(torch.float32)
-        if waveform.dim() == 2:
+
+        if waveform.dim() == 1:
+            waveform = waveform.unsqueeze(0)  # [T] -> [1, T]
+        else:
             waveform = waveform.transpose(0, 1)  # [T, C] -> [C, T]
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
 
         return waveform, sample_rate
 
@@ -148,47 +157,46 @@ class LibriTTSDataset(Dataset):
         segment_size = (self.segment_size // self.hop_length) * self.hop_length
 
         if audio.shape[-1] >= segment_size:
-            max_start = audio.shape[-1] - segment_size
-            start = random.randint(0, max_start)
+            start = random.randint(0, audio.shape[-1] - segment_size)
             return audio[..., start:start + segment_size]
-        else:
-            pad_size = segment_size - audio.shape[-1]
-            return torch.nn.functional.pad(audio, (0, pad_size), mode='constant', value=0)
 
-    def _load_or_build_index(self, use_cache, cache_path, min_duration_sec, max_duration_sec):
-        cache_path = cache_path or os.path.join(
-            self.root_dir, ".cache", f"libritts_index_{'_'.join(self.subsets)}.json"
-        )
+        pad_size = segment_size - audio.shape[-1]
+        return torch.nn.functional.pad(audio, (0, pad_size), mode="constant", value=0)
 
-        if use_cache and os.path.exists(cache_path):
-            logger.info(f"Loading LibriTTS index from cache: {cache_path}")
-            with open(cache_path, "r") as f:
-                return json.load(f)
+    @classmethod
+    def _scan(cls, root_dir, subsets, extensions, min_duration_sec, max_duration_sec):
+        key = (root_dir, tuple(subsets), extensions, min_duration_sec, max_duration_sec)
+        if key in _SCAN_MEMO:
+            return list(_SCAN_MEMO[key])
 
-        index = self._scan_subsets(min_duration_sec, max_duration_sec)
+        if not Path(root_dir).is_dir():
+            raise FileNotFoundError(f"LibriTTS root_dir does not exist: {root_dir}")
 
-        if use_cache:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "w") as f:
-                json.dump(index, f)
-            logger.info(f"Cached LibriTTS index ({len(index)} files) to {cache_path}")
-
-        return index
-
-    def _scan_subsets(self, min_duration_sec, max_duration_sec):
         index = []
-        for subset in self.subsets:
-            subset_dir = os.path.join(self.root_dir, subset)
-            if not os.path.isdir(subset_dir):
-                logger.warning(f"LibriTTS subset not found: {subset_dir}")
-                continue
+        for subset in subsets:
+            subset_dir = Path(root_dir) / subset
+            if not subset_dir.is_dir():
+                raise FileNotFoundError(
+                    f"LibriTTS subset not found: {subset_dir}. Available entries in "
+                    f"{root_dir}: {sorted(p.name for p in Path(root_dir).iterdir())}"
+                )
 
-            for wav_path in Path(subset_dir).rglob("*.wav"):
-                speaker_id = wav_path.relative_to(subset_dir).parts[0]
+            audio_paths = sorted(
+                path for path in subset_dir.rglob("*")
+                if path.suffix.lower() in extensions and path.is_file()
+            )
+            if not audio_paths:
+                raise FileNotFoundError(
+                    f"No audio files with extensions {extensions} found under "
+                    f"{subset_dir}"
+                )
+
+            kept = 0
+            for audio_path in audio_paths:
                 try:
-                    info = soundfile.info(str(wav_path))
-                except Exception as e:
-                    logger.warning(f"Skipping unreadable file {wav_path}: {e}")
+                    info = soundfile.info(str(audio_path))
+                except Exception as e:  # unreadable / truncated file
+                    logger.warning(f"Skipping unreadable file {audio_path}: {e}")
                     continue
 
                 duration = info.frames / info.samplerate
@@ -198,55 +206,71 @@ class LibriTTSDataset(Dataset):
                     continue
 
                 index.append({
-                    "audio_path": str(wav_path),
-                    "speaker_id": speaker_id,
-                    "id": wav_path.stem,
+                    "audio_path": str(audio_path),
+                    "speaker_id": audio_path.relative_to(subset_dir).parts[0],
+                    "id": audio_path.stem,
                     "num_frames": info.frames,
                     "orig_sample_rate": info.samplerate,
                 })
+                kept += 1
 
+            logger.info(
+                f"Scanned {subset_dir}: {kept}/{len(audio_paths)} files kept "
+                f"after duration filtering"
+            )
+
+        _SCAN_MEMO[key] = list(index)
         return index
 
     @staticmethod
-    def _speaker_allowed(speaker_id, allow_set, exclude_set):
-        if speaker_id in exclude_set:
-            return False
-        if allow_set is not None and speaker_id not in allow_set:
-            return False
-        return True
+    def _filter_speakers(index, speakers, exclude_speakers):
+        allow_set = {str(s) for s in speakers} if speakers else None
+        exclude_set = {str(s) for s in exclude_speakers} if exclude_speakers else set()
+
+        if allow_set is None and not exclude_set:
+            return index
+
+        return [
+            entry for entry in index
+            if entry["speaker_id"] not in exclude_set
+            and (allow_set is None or entry["speaker_id"] in allow_set)
+        ]
 
     @staticmethod
-    def _cap_per_speaker(index, max_files_per_speaker):
+    def _cap_per_speaker(index, max_files_per_speaker, seed):
         by_speaker = {}
         for entry in index:
             by_speaker.setdefault(entry["speaker_id"], []).append(entry)
 
-        rng = random.Random(42)
+        rng = random.Random(seed)
         capped = []
-        for entries in by_speaker.values():
+        for speaker_id in sorted(by_speaker):
+            entries = list(by_speaker[speaker_id])
             rng.shuffle(entries)
             capped.extend(entries[:max_files_per_speaker])
         return capped
 
-    def _apply_offset_and_limit(self, index, offset, limit):
-        if offset > 0:
-            index = index[offset:]
-        if limit is not None:
-            index = index[:limit]
-        return index
-
     @staticmethod
-    def _assert_index_is_valid(index):
+    def _bucket(utterance_id, seed):
+        """Map an utterance id to a stable float in [0, 1)."""
+        digest = hashlib.md5(f"{seed}:{utterance_id}".encode()).hexdigest()
+        return int(digest[:8], 16) / 2 ** 32
+
+    @classmethod
+    def _select_part(cls, index, part, val_ratio, test_ratio, split_seed):
+        if part == "all":
+            return list(index)
+
+        selected = []
         for entry in index:
-            assert "audio_path" in entry, "Missing 'audio_path' in dataset entry"
-            assert "speaker_id" in entry, "Missing 'speaker_id' in dataset entry"
+            bucket = cls._bucket(entry["id"], split_seed)
+            if bucket < test_ratio:
+                entry_part = "test"
+            elif bucket < test_ratio + val_ratio:
+                entry_part = "val"
+            else:
+                entry_part = "train"
 
-    @staticmethod
-    def _shuffle_and_limit_index(index, limit, shuffle_index):
-        if shuffle_index:
-            random.seed(42)
-            random.shuffle(index)
-
-        if limit is not None:
-            index = index[:limit]
-        return index
+            if entry_part == part:
+                selected.append(entry)
+        return selected
