@@ -2,7 +2,7 @@ import hashlib
 import logging
 import random
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence, Union
 
 import soundfile
 import torch
@@ -24,7 +24,7 @@ class LibriTTSDataset(Dataset):
     def __init__(
             self,
             root_dir: str,
-            subsets: Sequence[str] = ("train-clean-100",),
+            subsets: Union[Sequence[str], Mapping[str, bool]] = ("train-clean-100",),
             part: str = "train",
             val_ratio: float = 0.1,
             test_ratio: float = 0.1,
@@ -55,8 +55,16 @@ class LibriTTSDataset(Dataset):
             )
 
         self.root_dir = str(root_dir)
-        self.subsets = list(subsets)
+        self.subsets = self._normalize_subsets(subsets)
         self.part = part
+
+        if not self.subsets:
+            raise ValueError(
+                f"LibriTTSDataset[{name}] has no enabled subsets: every entry of "
+                f"'subsets' is switched off (got {subsets!r}). "
+                f"Enable at least one subset."
+            )
+
         self.segment_size = segment_size
         self.hop_length = hop_length
         self.sample_rate = sample_rate
@@ -162,6 +170,51 @@ class LibriTTSDataset(Dataset):
 
         pad_size = segment_size - audio.shape[-1]
         return torch.nn.functional.pad(audio, (0, pad_size), mode="constant", value=0)
+
+    @staticmethod
+    def _normalize_subsets(subsets) -> List[str]:
+        """
+        Resolve the `subsets` config entry into an ordered list of subset names.
+
+        Accepts a plain sequence, in which case every listed subset is used::
+
+            subsets: ["train-clean-100", "train-clean-360"]
+
+        or a mapping of subset -> flag, which lets a part of LibriTTS be
+        switched on and off without rewriting the list::
+
+            subsets:
+              train-clean-100: true
+              train-clean-360: true
+              train-other-500: false
+
+        A subset mapped to false (or to null) is left out of the scan entirely,
+        so switching one off costs nothing at startup.
+        """
+        if subsets is None:
+            return []
+        if isinstance(subsets, str):
+            subsets = [subsets]
+
+        if hasattr(subsets, "items"):  # dict / omegaconf DictConfig
+            pairs = list(subsets.items())
+        else:
+            pairs = [(entry, True) for entry in subsets]
+
+        selected: List[str] = []
+        for subset, enabled in pairs:
+            if not isinstance(subset, str):
+                raise TypeError(
+                    f"LibriTTS subset name must be a string, got {subset!r}"
+                )
+            if enabled is not None and not isinstance(enabled, bool):
+                raise TypeError(
+                    f"LibriTTS subset '{subset}' must be switched with a boolean, "
+                    f"got {enabled!r}"
+                )
+            if enabled and subset not in selected:
+                selected.append(subset)
+        return selected
 
     @classmethod
     def _scan(cls, root_dir, subsets, extensions, min_duration_sec, max_duration_sec):

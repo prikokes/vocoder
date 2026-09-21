@@ -9,7 +9,7 @@ defaults:
 
 run_name: "ISTFTWav-fast-full-data"
 
-writer:
+writer: 
   run_name: ${run_name}
 
 optimizer_g:
@@ -59,7 +59,7 @@ trainer:
   epoch_len: 750
   device_tensors: ["mel", "audio"]
   resume_from: null
-  device: mps
+  device: cuda
   override: True
   monitor: "min val_MelDistance"
   save_period: 1

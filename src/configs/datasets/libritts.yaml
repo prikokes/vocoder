@@ -1,10 +1,29 @@
+# LibriTTS partitions.
+#
+# `subsets` is a mapping of LibriTTS subset -> on/off, so parts of the corpus
+# can be added to or dropped from a run by flipping a flag instead of editing
+# a list. A subset switched off is never scanned, so it costs nothing.
+# A plain list (["train-clean-100", "train-clean-360"]) still works and means
+# "all of these".
+#
+# From the command line:
+#   python train.py 'datasets.train.subsets.train-clean-360=true'
+#
+# val and test read their own LibriTTS subsets, so the hash-based split inside
+# the dataset is switched off everywhere (`part: all`): every partition takes
+# all of its own subsets. To go back to splitting one subset by hash instead,
+# set `part` to train/val/test and give val_ratio/test_ratio non-zero values.
+
 train:
   _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
   root_dir: ${hydra:runtime.cwd}/data/LibriTTS
-  subsets: ["train-clean-100"]
-  part: train
-  val_ratio: 0.1
-  test_ratio: 0.1
+  subsets:
+    train-clean-100: true
+    train-clean-360: false
+    train-other-500: false
+  part: all
+  val_ratio: 0.0
+  test_ratio: 0.0
   split_seed: 42
   segment_size: 16384
   sample_rate: 22050
@@ -22,8 +41,10 @@ train:
 val:
   _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
   root_dir: ${datasets.train.root_dir}
-  subsets: ${datasets.train.subsets}
-  part: val
+  subsets:
+    dev-clean: true
+    dev-other: false
+  part: all
   val_ratio: ${datasets.train.val_ratio}
   test_ratio: ${datasets.train.test_ratio}
   split_seed: ${datasets.train.split_seed}
@@ -42,8 +63,10 @@ val:
 test:
   _target_: src.datasets.libri_tts_dataset.LibriTTSDataset
   root_dir: ${datasets.train.root_dir}
-  subsets: ${datasets.train.subsets}
-  part: test
+  subsets:
+    test-clean: true
+    test-other: false
+  part: all
   val_ratio: ${datasets.train.val_ratio}
   test_ratio: ${datasets.train.test_ratio}
   split_seed: ${datasets.train.split_seed}
